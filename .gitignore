@@ -1,0 +1,11 @@
+.*.swp
+*~
+/compile
+/install-sh
+/missing
+/depcomp
+/aclocal.m4
+/config.h.in
+/configure
+/autom4te.cache
+Makefile.in
