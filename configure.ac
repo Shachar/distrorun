@@ -10,8 +10,10 @@ AM_INIT_AUTOMAKE([foreign])
 # Checks for programs.
 AC_PROG_CXX
 AC_PROG_CC
+PKG_PROG_PKG_CONFIG
 
 # Checks for libraries.
+PKG_CHECK_MODULES([LIBCONFIGXX], [libconfig++ >= 1.5])
 
 # Checks for header files.
 

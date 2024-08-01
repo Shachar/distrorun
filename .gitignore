@@ -8,4 +8,5 @@
 /config.h.in
 /configure
 /autom4te.cache
+/build*
 Makefile.in
