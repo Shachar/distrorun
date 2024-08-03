@@ -30,19 +30,18 @@ struct Parameters {
 bool sanitize_extra_volume(std::filesystem::path volume);
 void parse_config(Parameters &params);
 
-int container_code(void *void_params) {
-    auto params = reinterpret_cast<const Parameters *>(void_params);
+int container_code(const Parameters &params) {
 
-    std::cerr<<"Root is "<<params->root<<"\n";
-    if( mount( params->root.c_str(), params->root.c_str(), nullptr, MS_BIND|MS_PRIVATE, nullptr ) ) {
-        std::cerr<<"Bind mount of root failed: "<<strerror(errno)<<"\n";
+    std::cerr<<"Root is "<<params.root<<"\n";
+    if( mount( "none", "/", nullptr, MS_REC|MS_PRIVATE, nullptr ) ) {
+        std::cerr<<"Remount of root failed: "<<strerror(errno)<<"\n";
 
         return 5;
     }
 
 
-    for( const auto &volume : params->volumes ) {
-        std::filesystem::path mountpoint = params->root;
+    for( const auto &volume : params.volumes ) {
+        std::filesystem::path mountpoint = params.root;
         mountpoint /= volume.relative_path();
         std::cerr<<"Mounting "<<volume<<" on "<<mountpoint<<"\n";
         if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_PRIVATE, nullptr )!=0 ) {
@@ -54,7 +53,7 @@ int container_code(void *void_params) {
 
     // Drop all privileges before executing
     setuid( getuid() );
-    execvpe( params->argv[0], params->argv, params->env );
+    execvpe( params.argv[0], params.argv, params.env );
     std::cerr<<"Couldn't execute command: "<<strerror(errno)<<"\n";
 
     return 5;
@@ -133,47 +132,11 @@ int main(int argc, char *argv[], char *env[]) {
         return 2;
     }
 
-    static constexpr size_t STACK_SIZE = 16384;
-    void *child_stack = mmap( NULL, STACK_SIZE, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_GROWSDOWN|MAP_STACK, -1, 0);
-    if( child_stack==MAP_FAILED ) {
-        std::cerr<<"Failed to allocate stack: "<<strerror(errno)<<"\n";
-
-        return 2;
-    }
 
     params.env = env;
-    int ret = clone(
-            container_code,
-            child_stack + STACK_SIZE,            // Different address space, use parent's stack
-            CLONE_NEWNS|SIGCHLD,
-            &params);
 
-    if( ret==-1 ) {
-        std::cerr<<"Failed to launch child process: "<<strerror(errno)<<"\n";
-
-        return 3;
-    }
-
-    int status;
-    ret = wait(&status);
-    if( ret==-1 ) {
-        std::cerr<<"Parent wait on child failed: "<<strerror(errno)<<"\n";
-
-        return 3;
-    }
-
-    if( WIFEXITED(status) )
-        return WEXITSTATUS(status);
-
-    if( WIFSIGNALED(status) ) {
-        std::cerr<<"Child exit with signal "<<WTERMSIG(status)<<"\n";
-
-        return 3;
-    }
-
-    std::cerr<<"Child exit with unknown reason "<<status<<"\n";
-
-    return 4;
+    unshare(CLONE_FS|CLONE_NEWNS);
+    return container_code(params);
 }
 
 bool sanitize_extra_volume(std::filesystem::path volume) { 
