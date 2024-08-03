@@ -4,6 +4,3 @@ mapped_volumes: [
     "/home",
     "/tmp"
 ]
-passwd_min_uid_copy: 1000
-copy_shadow: False
-group_min_gid_copy: 1000
