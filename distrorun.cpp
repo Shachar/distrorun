@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include <sys/mman.h>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -16,19 +17,40 @@
 
 #include <string.h>
 
-bool sanitize_extra_volume(std::filesystem::path volume);
-
 struct Parameters {
     std::string name;
-    std::vector<std::filesystem::path> extraVolumes;
+    std::filesystem::path root;
+    std::vector<std::filesystem::path> volumes, extraVolumes;
     std::filesystem::path workDir;
     int argc;
     char **argv;
     char **env;
 };
 
+bool sanitize_extra_volume(std::filesystem::path volume);
+void parse_config(Parameters &params);
+
 int container_code(void *void_params) {
     auto params = reinterpret_cast<const Parameters *>(void_params);
+
+    std::cerr<<"Root is "<<params->root<<"\n";
+    if( mount( params->root.c_str(), params->root.c_str(), nullptr, MS_BIND|MS_PRIVATE, nullptr ) ) {
+        std::cerr<<"Bind mount of root failed: "<<strerror(errno)<<"\n";
+
+        return 5;
+    }
+
+
+    for( const auto &volume : params->volumes ) {
+        std::filesystem::path mountpoint = params->root;
+        mountpoint /= volume.relative_path();
+        std::cerr<<"Mounting "<<volume<<" on "<<mountpoint<<"\n";
+        if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_PRIVATE, nullptr )!=0 ) {
+            std::cerr<<"Failed to mount "<<volume<<": "<<strerror(errno)<<"\n";
+
+            return 5;
+        }
+    }
 
     // Drop all privileges before executing
     setuid( getuid() );
@@ -88,33 +110,15 @@ Parameters parse_params(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[], char *env[]) {
-#if 0
     if( getuid() == geteuid() && getuid()!=0 ) {
         std::cerr<<"This program needs to be SUID to function\n";
 
         return 1;
     }
-#endif
 
     Parameters params = parse_params(argc, argv);
 
-    std::filesystem::path config_file( SYSCONFDIR );
-    config_file /= PACKAGE_NAME ".d";
-    config_file /= params.name + ".conf";
-
-    libconfig::Config cfg;
-    
-    try {
-        cfg.readFile(config_file.c_str());
-    } catch(libconfig::FileIOException &ex) {
-        std::cerr << "Error while reading config file "<<config_file<<": "<<ex.what()<<"\n";
-
-        return 1;
-    } catch(libconfig::ParseException &ex) {
-        std::cerr << "Error while parsing config file "<<ex.getFile()<<":"<<ex.getLine()<<": "<<ex.getError()<<"\n";
-
-        return 1;
-    }
+    parse_config(params);
 
     // Make sure user has access to all command line passed volumes
     seteuid( getuid() );        // Saved UID will allow us to return to root
@@ -187,4 +191,36 @@ bool sanitize_extra_volume(std::filesystem::path volume) {
     }
 
     return true;
+}
+
+
+void parse_config(Parameters &params) {
+    std::filesystem::path config_file( SYSCONFDIR );
+    config_file /= PACKAGE_NAME ".d";
+    config_file /= params.name + ".conf";
+
+    libconfig::Config cfg;
+    try {
+        cfg.readFile(config_file.c_str());
+    } catch(libconfig::FileIOException &ex) {
+        std::cerr << "Error while reading config file "<<config_file<<": "<<ex.what()<<"\n";
+
+        exit(1);
+    } catch(libconfig::ParseException &ex) {
+        std::cerr << "Error while parsing config file "<<ex.getFile()<<":"<<ex.getLine()<<": "<<ex.getError()<<"\n";
+
+        exit(1);
+    }
+
+    const libconfig::Setting &cfgRoot = cfg.getRoot();
+
+    params.root = cfgRoot["dir"];
+    for( const char *volume : cfgRoot["mapped_volumes"] ) {
+        if( volume[0]!='/' ) {
+            std::cerr<<"Mapped volume "<<volume<<" is a relative path\n";
+
+            exit(1);
+        }
+        params.volumes.emplace_back( volume );
+    }
 }
