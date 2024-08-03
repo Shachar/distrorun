@@ -44,15 +44,53 @@ int container_code(const Parameters &params) {
         std::filesystem::path mountpoint = params.root;
         mountpoint /= volume.relative_path();
         std::cerr<<"Mounting "<<volume<<" on "<<mountpoint<<"\n";
-        if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_PRIVATE, nullptr )!=0 ) {
+        if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_REC|MS_PRIVATE, nullptr )!=0 ) {
             std::cerr<<"Failed to mount "<<volume<<": "<<strerror(errno)<<"\n";
 
             return 5;
         }
     }
 
+    for( const auto &volume : params.extraVolumes ) {
+        std::filesystem::path mountpoint = params.root;
+        mountpoint /= volume.relative_path();
+        std::cerr<<"Mounting "<<volume<<" on "<<mountpoint<<"\n";
+        if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_REC|MS_PRIVATE, nullptr )!=0 ) {
+            std::cerr<<"Failed to mount "<<volume<<": "<<strerror(errno)<<"\n";
+
+            return 5;
+        }
+    }
+
+    if( chroot(params.root.c_str()) ) {
+        std::cerr<<"Failed to chroot to "<<params.root<<": "<<strerror(errno)<<"\n";
+
+        return 5;
+    }
+
+    chdir("/");
+
+    if( mount("proc", "/proc", "proc", 0, nullptr) ) {
+        std::cerr<<"Failed to mount /proc: "<<strerror(errno)<<"\n";
+
+        return 5;
+    }
+
+    if( mount("none", "/sys", "sysfs", 0, nullptr) ) {
+        std::cerr<<"Failed to mount /sys: "<<strerror(errno)<<"\n";
+
+        return 5;
+    }
+
     // Drop all privileges before executing
     setuid( getuid() );
+
+    if( chdir(params.workDir.c_str()) ) {
+        std::cerr<<"Couldn't chdir to "<<params.workDir<<": "<<strerror(errno)<<"\n";
+
+        return 5;
+    }
+
     execvpe( params.argv[0], params.argv, params.env );
     std::cerr<<"Couldn't execute command: "<<strerror(errno)<<"\n";
 
