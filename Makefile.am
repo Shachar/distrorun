@@ -1,5 +1,6 @@
 bin_PROGRAMS=distrorun
 nobase_sysconf_DATA=distrorun.d/somedistro.conf.example
+EXTRA_DIST=distrorun.d
 
 distrorun_SOURCES=distrorun.cpp
 distrorun_CPPFLAGS=$(LIBCONFIGXX_CFLAGS) -DSYSCONFDIR="\"${sysconfdir}\""
