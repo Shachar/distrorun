@@ -12,6 +12,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,69 +28,40 @@ struct Parameters {
     char **env;
 };
 
+#define invoke( func, errmsg, returncode ) \
+        if( (func) != 0 ) { std::cerr<<errmsg<<": "<<strerror(errno)<<"\n"; return (returncode); }
+
 bool sanitize_extra_volume(std::filesystem::path volume);
 void parse_config(Parameters &params);
 
 int container_code(const Parameters &params) {
 
     std::cerr<<"Root is "<<params.root<<"\n";
-    if( mount( "none", "/", nullptr, MS_REC|MS_PRIVATE, nullptr ) ) {
-        std::cerr<<"Remount of root failed: "<<strerror(errno)<<"\n";
-
-        return 5;
-    }
-
+    invoke( mount( "none", "/", nullptr, MS_REC|MS_PRIVATE, nullptr ), "Remount of root failed", 5 );
 
     for( const auto &volume : params.volumes ) {
         std::filesystem::path mountpoint = params.root;
         mountpoint /= volume.relative_path();
         std::cerr<<"Mounting "<<volume<<" on "<<mountpoint<<"\n";
-        if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_REC|MS_PRIVATE, nullptr )!=0 ) {
-            std::cerr<<"Failed to mount "<<volume<<": "<<strerror(errno)<<"\n";
-
-            return 5;
-        }
+        invoke( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_REC|MS_PRIVATE, nullptr ), "Failed to mount "<<volume, 5 );
     }
 
     for( const auto &volume : params.extraVolumes ) {
         std::filesystem::path mountpoint = params.root;
         mountpoint /= volume.relative_path();
         std::cerr<<"Mounting "<<volume<<" on "<<mountpoint<<"\n";
-        if( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_REC|MS_PRIVATE, nullptr )!=0 ) {
-            std::cerr<<"Failed to mount "<<volume<<": "<<strerror(errno)<<"\n";
-
-            return 5;
-        }
+        invoke( mount( volume.c_str(), mountpoint.c_str(), nullptr, MS_BIND|MS_REC|MS_PRIVATE, nullptr ), "Failed to mount "<<volume, 5 );
     }
 
-    if( chroot(params.root.c_str()) ) {
-        std::cerr<<"Failed to chroot to "<<params.root<<": "<<strerror(errno)<<"\n";
-
-        return 5;
-    }
-
-    chdir("/");
-
-    if( mount("proc", "/proc", "proc", 0, nullptr) ) {
-        std::cerr<<"Failed to mount /proc: "<<strerror(errno)<<"\n";
-
-        return 5;
-    }
-
-    if( mount("none", "/sys", "sysfs", 0, nullptr) ) {
-        std::cerr<<"Failed to mount /sys: "<<strerror(errno)<<"\n";
-
-        return 5;
-    }
+    invoke( chroot(params.root.c_str()), "Failed to chroot to "<<params.root, 5 );
+    invoke( chdir("/"), "Failed to chdir to new root", 5 );
+    invoke( mount("proc", "/proc", "proc", 0, nullptr), "Failed to mount /proc", 5 );
+    invoke( mount("none", "/sys", "sysfs", 0, nullptr), "Failed to mount /sys", 5 );
 
     // Drop all privileges before executing
-    setuid( getuid() );
+    invoke( setuid( getuid() ), "Failed to drop priviliges", 5 );
 
-    if( chdir(params.workDir.c_str()) ) {
-        std::cerr<<"Couldn't chdir to "<<params.workDir<<": "<<strerror(errno)<<"\n";
-
-        return 5;
-    }
+    invoke( chdir(params.workDir.c_str()), "Couldn't chdir to "<<params.workDir, 5 );
 
     execvpe( params.argv[0], params.argv, params.env );
     std::cerr<<"Couldn't execute command: "<<strerror(errno)<<"\n";
@@ -98,6 +70,15 @@ int container_code(const Parameters &params) {
 }
 
 Parameters parse_params(int argc, char *argv[]) {
+    std::optional<std::string> previousPosixCorrect;
+    {
+        const char *var = getenv("POSIXLY_CORRECT");
+        if( var )
+            previousPosixCorrect.emplace(var);
+    }
+
+    setenv("POSIXLY_CORRECT", "1", true);
+
     Parameters params;
 
     {
@@ -123,6 +104,12 @@ Parameters parse_params(int argc, char *argv[]) {
         case Options::ExtraVolumes: params.extraVolumes.emplace_back(optarg); break;
         case Options::Done: abort();
         }
+    }
+
+    if( previousPosixCorrect ) {
+        setenv("POSIXLY_CORRECT", previousPosixCorrect->c_str(), true);
+    } else {
+        unsetenv("POSIXLY_CORRECT");
     }
 
     if( optind>=argc ) {
@@ -158,18 +145,13 @@ int main(int argc, char *argv[], char *env[]) {
     parse_config(params);
 
     // Make sure user has access to all command line passed volumes
-    seteuid( getuid() );        // Saved UID will allow us to return to root
+    invoke( seteuid( getuid() ), "Failed to temporarily drop privileges", 3 );  // Saved UID will allow us to return to root
     for( auto volume : params.extraVolumes ) {
         if( !sanitize_extra_volume(volume) )
             return 1;
     }
 
-    if( seteuid(0) ) {
-        std::cerr<<"Failed to restore privilige\n";
-
-        return 2;
-    }
-
+    invoke( seteuid(0), "Failed to restore priviliges", 2 );
 
     params.env = env;
 
