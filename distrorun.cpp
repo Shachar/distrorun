@@ -206,4 +206,12 @@ void parse_config(Parameters &params) {
         }
         params.volumes.emplace_back( volume );
     }
+
+    // Cannonize the work directory
+    auto relativeWd = params.workDir.lexically_relative(params.root);
+    if( relativeWd.string().find("../")!=0 && relativeWd.string()!=".." && relativeWd.c_str()[0]!='/' ) {
+        std::cout<<"Mapping work dir from "<<params.workDir<<" to "<<relativeWd<<"\n";
+        // workDir is a subdirectory or root
+        params.workDir = relativeWd;
+    }
 }
