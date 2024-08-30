@@ -63,6 +63,8 @@ int container_code(const Parameters &params) {
 
     invoke( chdir(params.workDir.c_str()), "Couldn't chdir to "<<params.workDir, 5 );
 
+    std::cout<<"Starting command "<<params.argv[0]<<"\n";
+
     execvpe( params.argv[0], params.argv, params.env );
     std::cerr<<"Couldn't execute command: "<<strerror(errno)<<"\n";
 
