@@ -132,6 +132,22 @@ Parameters parse_params(int argc, char *argv[]) {
     params.argc = argc-optind;
     params.argv = argv+optind;
 
+    if( params.argc == 0 ) {
+        char *shell = getenv("SHELL");
+
+        if( shell==nullptr ) {
+            std::cerr<<"No command given and no SHELL environment set\n";
+
+            exit(2);
+        }
+
+        static char *argv[2];
+        argv[0] = shell;
+        argv[1] = nullptr;
+        params.argv = argv;
+        params.argc = 1;
+    }
+
     return params;
 }
 
